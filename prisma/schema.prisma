@@ -1,0 +1,211 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// User model
+model User {
+  id                String               @id @default(uuid())
+  email             String               @unique
+  name              String
+  role              String               @default("VIEWER") // ADMINISTRATOR, PROCUREMENT_OFFICER, REVIEWER, VIEWER
+  departmentId      String?
+  department        Department?          @relation(fields: [departmentId], references: [id])
+  createdRequests   ProcurementRequest[]
+  createdQuotations Quotation[]
+  createdAnalyses   MarketAnalysis[]
+  auditLogs         AuditLog[]
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+}
+
+model Department {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  users     User[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------
+// 1. Catalog Entities (Reusable)
+// ---------------------------------------------------------
+
+model ItemCategory {
+  id          String            @id @default(uuid())
+  name        String            @unique
+  description String?
+  items       ProcurementItem[]
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+}
+
+model ProcurementItem {
+  id             String                    @id @default(uuid())
+  name           String
+  description    String?
+  categoryId     String
+  category       ItemCategory              @relation(fields: [categoryId], references: [id])
+  active         Boolean                   @default(true)
+  specifications SpecificationDefinition[]
+  createdAt      DateTime                  @default(now())
+  updatedAt      DateTime                  @updatedAt
+}
+
+model SpecificationDefinition {
+  id             String          @id @default(uuid())
+  itemId         String
+  item           ProcurementItem @relation(fields: [itemId], references: [id])
+  name           String
+  type           String          // TEXT, NUMBER, BOOLEAN, SELECT
+  unit           String?
+  required       Boolean         @default(true)
+  comparisonType String          // MINIMUM, MAXIMUM, EXACT, ALLOWED_VALUE, TEXT_MATCH
+  allowedValues  String?         // JSON string
+  active         Boolean         @default(true)
+}
+
+// ---------------------------------------------------------
+// 2. Procurement Entities (Historical Snapshots)
+// ---------------------------------------------------------
+
+model ProcurementRequest {
+  id               String                   @id @default(uuid())
+  reference        String                   @unique
+  title            String
+  description      String?
+  status           String                   @default("DRAFT") // DRAFT, MARKET_RESEARCH, ANALYSIS, READY_FOR_PROCUREMENT, COMPLETED, CANCELLED
+  requiredQuantity Int
+  unitOfMeasure    String
+  department       String
+  requiredDate     DateTime
+  notes            String?
+  createdById      String
+  createdBy        User                     @relation(fields: [createdById], references: [id])
+  requirements     ProcurementRequirement[]
+  quotations       Quotation[]
+  marketAnalysis   MarketAnalysis?
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+}
+
+model ProcurementRequirement {
+  id                        String                 @id @default(uuid())
+  procurementRequestId      String
+  procurementRequest        ProcurementRequest     @relation(fields: [procurementRequestId], references: [id], onDelete: Cascade)
+  specificationDefinitionId String
+  name                      String
+  type                      String                 // TEXT, NUMBER, BOOLEAN, SELECT
+  unit                      String?
+  required                  Boolean                @default(true)
+  comparisonType            String                 // MINIMUM, MAXIMUM, EXACT, ALLOWED_VALUE, TEXT_MATCH
+  requiredValue             String?
+  allowedValues             String?                // JSON string
+  quotationSpecifications   QuotationSpecification[]
+}
+
+// ---------------------------------------------------------
+// 3. Supplier & Quotation Entities
+// ---------------------------------------------------------
+
+model Supplier {
+  id                           String      @id @default(uuid())
+  name                         String
+  businessRegistrationNumber   String?
+  contactPerson                String?
+  phone                        String?
+  email                        String?
+  address                      String?
+  status                       String      @default("ACTIVE") // ACTIVE, INACTIVE
+  notes                        String?
+  quotations                   Quotation[]
+  createdAt                    DateTime    @default(now())
+  updatedAt                    DateTime    @updatedAt
+}
+
+model Quotation {
+  id                   String                   @id @default(uuid())
+  procurementRequestId String
+  procurementRequest   ProcurementRequest       @relation(fields: [procurementRequestId], references: [id], onDelete: Cascade)
+  supplierId           String
+  supplier             Supplier                 @relation(fields: [supplierId], references: [id])
+  quotationReference   String?
+  quotationDate        DateTime
+  quantity             Int
+  unitPrice            Float
+  vatRate              Float                    @default(15.0)
+  vatAmount            Float
+  subtotal             Float
+  totalPrice           Float
+  currency             String                   @default("ETB")
+  notes                String?
+  qualificationStatus  String                   @default("INCOMPLETE") // QUALIFIED, NOT_QUALIFIED, INCOMPLETE
+  qualificationScore   Float?
+  createdById          String
+  createdBy            User                     @relation(fields: [createdById], references: [id])
+  specifications       QuotationSpecification[]
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime                 @updatedAt
+}
+
+model QuotationSpecification {
+  id                       String                 @id @default(uuid())
+  quotationId              String
+  quotation                Quotation              @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  procurementRequirementId String
+  procurementRequirement   ProcurementRequirement @relation(fields: [procurementRequirementId], references: [id], onDelete: Cascade)
+  value                    String?
+}
+
+// ---------------------------------------------------------
+// 4. Analysis & Tracking
+// ---------------------------------------------------------
+
+model MarketAnalysis {
+  id                         String             @id @default(uuid())
+  procurementRequestId       String             @unique
+  procurementRequest         ProcurementRequest @relation(fields: [procurementRequestId], references: [id], onDelete: Cascade)
+  quotationCount             Int
+  qualifiedQuotationCount    Int
+  lowestOverallPrice         Float?
+  lowestQualifiedPrice       Float?
+  highestQualifiedPrice      Float?
+  averageQualifiedPrice      Float?
+  medianQualifiedPrice       Float?
+  recommendedBenchmarkPrice  Float?
+  estimatedProcurementBudget Float?
+  calculationMethod          String?            // e.g. MEDIAN_QUALIFIED_PRICES
+  qualifiedQuotationIds      String?            // JSON array of strings
+  anomalyThreshold           Float?
+  analysisDate               DateTime           @default(now())
+  createdById                String
+  createdBy                  User               @relation(fields: [createdById], references: [id])
+  createdAt                  DateTime           @default(now())
+  updatedAt                  DateTime           @updatedAt
+}
+
+model SupplierRanking {
+  id                   String   @id @default(uuid())
+  procurementRequestId String
+  supplierId           String
+  rank                 Int
+  score                Float
+  price                Float
+  isRecommended        Boolean  @default(false)
+  createdAt            DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  action    String
+  entity    String
+  entityId  String
+  details   String?  // JSON string of changes
+  timestamp DateTime @default(now())
+}
